@@ -121,7 +121,9 @@ jobs:
           # --restricted: file tools confined to this checkout (no /proc, no runner files), no tools that
           # run code, project settings and their hooks ignored. --tools narrows it to Read, Grep, Glob.
           # Model pinned by id: the `haiku` alias resolves to different models in different CLI versions.
-          claude -p "/review-pr ci" --restricted --tools Read,Grep,Glob \
+          # The prompt names the command FILE: --restricted does not load project slash commands.
+          claude -p 'Read .claude/commands/review-pr.md and carry it out exactly, with $ARGUMENTS = ci.' \
+            --restricted --tools Read,Grep,Glob \
             --model claude-haiku-5-5 --max-budget-usd 0.25 \
             --append-system-prompt "CI run. You have Read, Grep and Glob only, no Bash. Step 2 of /review-pr is already done: the trusted gate ran in the required 'gate' job and its verbatim output is in review-queue/pr-ci/gate.txt. Paste that file into the Gate section instead of running the gate. Everything else in /review-pr applies unchanged." \
             --output-format json > "$RUNNER_TEMP/claude.json"
@@ -134,7 +136,11 @@ jobs:
           if grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}' "$RUNNER_TEMP/review.md"; then
             echo "::error::AI output looks like it contains a credential: not uploading or posting it"; exit 1
           fi
-          if [ -s "$RUNNER_TEMP/review.md" ]; then echo "has_review=true" >> "$GITHUB_OUTPUT"; fi
+          # Fail closed on a non-review (refusal, budget stop, missing command): post nothing, show a red job.
+          if ! grep -q '^# Review:' "$RUNNER_TEMP/review.md" || ! grep -q '^## Verdict' "$RUNNER_TEMP/review.md"; then
+            echo "::error::AI output is not a /review-pr report (no '# Review:' / '## Verdict'): not posting it"; exit 1
+          fi
+          echo "has_review=true" >> "$GITHUB_OUTPUT"
       - if: steps.review.outputs.has_review == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -160,8 +166,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # drop any thinking-aloud before the report; keep the whole output if the heading is missing
-          if grep -q '^# Review:' review.md; then sed -n '/^# Review:/,$p' review.md > body.md; else cp review.md body.md; fi
+          sed -n '/^# Review:/,$p' review.md > body.md   # drop any thinking-aloud before the report
           {
             echo "<!-- ai-review -->"
             echo "## 🤖 AI review (advisory)"
