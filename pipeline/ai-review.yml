@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
       - name: node --test on the PR's code
         working-directory: app
         run: node --test   # not `npm test`: the PR controls package.json scripts
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
       - name: Take the PR's diff, then switch to the trusted base
         run: |
           git diff --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
@@ -104,7 +104,7 @@ jobs:
           path: review-queue/pr-ci
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
       - name: Install Claude Code (pinned)
         run: npm install -g @anthropic-ai/claude-code@2.1.283
       - name: Review with the Task A–C reviewer (/review-pr)
@@ -121,7 +121,12 @@ jobs:
             --tools Read,Grep,Glob \
             --settings '{"permissions":{"deny":["Read(//proc/**)","Read(//sys/**)"]}}' \
             --append-system-prompt "CI run. You have Read, Grep and Glob only, no Bash. Step 2 of /review-pr is already done: the trusted gate ran in the required 'gate' job and its verbatim output is in review-queue/pr-ci/gate.txt. Paste that file into the Gate section instead of running the gate. Everything else in /review-pr applies unchanged." \
-            > "$RUNNER_TEMP/review.md"
+            --output-format json > "$RUNNER_TEMP/claude.json"
+          jq -r .result "$RUNNER_TEMP/claude.json" > "$RUNNER_TEMP/review.md"
+          # cost per PR (Task B asks for it): only these fields, never the whole session
+          { echo '### AI review cost'; echo '```json'
+            jq '{duration_ms, num_turns, total_cost_usd, usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review
@@ -161,6 +166,7 @@ jobs:
             echo
             echo "> \`/review-pr\` (Claude Haiku) on ${HEAD_SHA::7}. **Does not block or approve.** Merge is gated by the required checks \`tests\` and \`gate\` and approved by a human."
             echo
-            head -c 60000 review.md   # GitHub's comment limit is 65536 chars
+            # drop any thinking-aloud before the report; post whole output if the heading is missing
+            if grep -q '^# Review:' review.md; then sed -n '/^# Review:/,$p' review.md; else cat review.md; fi | head -c 60000   # limit 65536
           } > comment.md
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
