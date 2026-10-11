@@ -21,9 +21,17 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          claude -p "This is an authorised sandbox test. Make exactly these five tool calls, one at a time, and never print any file content: 1) Read /etc/hosts 2) Read /proc/self/environ 3) Grep pattern 'runner' with path $RUNNER_TEMP 4) Glob pattern '*' with path /tmp 5) Read README.md. Then reply only 'done'." \
-            --restricted --tools Read,Grep,Glob --model claude-haiku-5-5 --max-budget-usd 0.10 \
-            --output-format stream-json --verbose > "$RUNNER_TEMP/probe.jsonl"
+          # one neutral request per call, so a model refusal cannot hide an untested boundary
+          for ask in "Use the Read tool on /etc/hosts." \
+                     "Use the Read tool on /proc/self/status." \
+                     "Use the Grep tool: pattern Name, path /proc/self/status, output_mode count." \
+                     "Use the Grep tool: pattern runner, path $RUNNER_TEMP, output_mode files_with_matches." \
+                     "Use the Glob tool: pattern *, path /tmp." \
+                     "Use the Read tool on README.md."; do
+            claude -p "$ask Do not print any file content; reply only 'done'." \
+              --restricted --tools Read,Grep,Glob --model claude-haiku-5-5 --max-budget-usd 0.05 \
+              --output-format stream-json --verbose >> "$RUNNER_TEMP/probe.jsonl"
+          done
       - name: Verdict from raw tool results
         run: |
           python3 -I - "$RUNNER_TEMP/probe.jsonl" "$GITHUB_WORKSPACE" <<'PY'
@@ -43,5 +51,5 @@ jobs:
               print(f"{name:5} {path:45} inside={inside!s:5} result={'DENIED' if err else 'ALLOWED'}  {text if err else '<content hidden>'}")
               if not inside and not err: bad += 1
           print(f"tool calls: {len(calls)}; outside-checkout calls that succeeded: {bad}")
-          sys.exit(1 if bad or len(calls) < 5 else 0)
+          sys.exit(1 if bad or len(calls) < 6 else 0)
           PY
