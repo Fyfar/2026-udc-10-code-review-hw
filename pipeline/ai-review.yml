@@ -126,7 +126,7 @@ jobs:
           # cost per PR (Task B asks for it): only these fields, never the whole session
           { echo '### AI review cost'; echo '```json'
             jq '{duration_ms, num_turns, total_cost_usd, usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
-            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review
