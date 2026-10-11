@@ -2,6 +2,7 @@ import { isStaff, requireRole, STAFF } from "./auth.js";
 
 export const LOAN_DAYS = 14;
 export const FEE_PER_DAY_KOPECKS = 500; // 5 грн за кожен день прострочення
+export const GRACE_DAYS = 1; // політика з 1 листопада: перший день прострочення безкоштовний
 
 // --- date helpers (YYYY-MM-DD strings, UTC) ---------------------------------
 
@@ -36,7 +37,7 @@ export function borrow(db, user, { bookId, takenAt }) {
 
 /** Late fee in kopecks for a loan returned (or still out) on `onIso`. */
 export function lateFee(loan, onIso) {
-  const late = daysBetween(loan.dueAt, loan.returnedAt ?? onIso);
+  const late = daysBetween(loan.dueAt, loan.returnedAt ?? onIso) - GRACE_DAYS;
   return late > 0 ? late * FEE_PER_DAY_KOPECKS : 0;
 }
 
