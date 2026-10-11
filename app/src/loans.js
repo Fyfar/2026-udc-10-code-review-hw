@@ -46,15 +46,16 @@ export function lateFee(loan, onIso) {
  */
 export function overdueReport(db, user, todayIso) {
   requireRole(user, STAFF);
-  const names = new Map(db.members.map((m) => [m.id, m.name]));
   return db.loans
     .filter((l) => l.returnedAt === null && l.dueAt < todayIso)
     .map((l) => ({
       loanId: l.id,
-      member: names.get(l.memberId) ?? "—",
+      member: db.findMember(l.memberId)?.name ?? "—",
+      email: db.findMember(l.memberId)?.email ?? null,
       book: db.findBook(l.bookId)?.title ?? "—",
       daysLate: daysBetween(l.dueAt, todayIso),
       feeKopecks: lateFee(l, todayIso),
+      feeText: (lateFee(l, todayIso) / 100).toFixed(2).replace(".", ",") + " грн",
     }))
     .sort((a, b) => b.daysLate - a.daysLate);
 }

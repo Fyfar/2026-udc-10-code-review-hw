@@ -45,6 +45,7 @@ test("overdue report lists loans still out past due, most overdue first", () => 
   const rows = overdueReport(createDb(), iryna, "2026-10-08");
   assert.deepEqual(rows.map((r) => r.loanId), [6, 3, 2]);
   assert.equal(rows[0].member, "Марко Приклад");
+  assert.equal(rows[0].email, "marko@example.invalid");
   assert.equal(rows[0].daysLate, 22);
   assert.equal(rows[0].feeKopecks, 11000);
 });
