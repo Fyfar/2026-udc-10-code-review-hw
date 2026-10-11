@@ -102,6 +102,24 @@ const MONEY_WORDS = new Set(["fee", "fees", "price", "amount", "cost", "fine", "
 const OBJECT_KEY = /(?:^|[{,])\s*["']?([A-Za-z_$][\w$]*)["']?\s*:(?!:)/g;
 const isMoneyKey = (k) => k.split(/(?=[A-Z])|_/).some((w) => MONEY_WORDS.has(w.toLowerCase()));
 const GATED = /requireRole\(|isStaff\(|AccessDenied|if\s*\(\s*!user\s*\)/;
+// PII *read* from a record: m.email, m?.phone, any "email"/'phone' key string (m["email"], pick(m, "email")),
+// or destructuring — `const { email } = m`, `({ email }) =>`, `function f({ phone }) {`, `for (const { email } of …)`.
+// A bare `email` variable parsed from input and written into db (push({ …, email })) is not a read —
+// R4 is about what is handed out.
+const READS_PII = /\??\.\s*(email|phone)\b|["'`](email|phone)["'`]|\{[^{}]*\b(email|phone)\b[^{}]*\}\s*(=[^=>]|\)\s*(=>|\{)|of\b)/;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `...x` whose innermost open bracket is `{` — an object spread, not `[...x]` or `f(...args)`. */
+// ponytail: bracket scan ignores strings/regex literals — fine for this codebase; a parser if it bites
+export function hasObjectSpread(code) {
+  for (const m of code.matchAll(/\.\.\.\s*[A-Za-z_$]/g)) {
+    for (let i = m.index - 1, depth = 0; i >= 0; i--) {
+      if (")]}".includes(code[i])) depth++;
+      else if ("([{".includes(code[i]) && depth-- === 0) { if (code[i] === "{") return true; break; }
+    }
+  }
+  return false;
+}
 
 export const CHECKS = {
   // G2 — no npm dependencies; imports are node: builtins or relative
@@ -136,8 +154,17 @@ export const CHECKS = {
     const out = [];
     for (const [p, src] of ctx.tree) {
       if (!isSrc(p)) continue;
-      for (const fn of exportedFunctions(src))
-        if (fn.params[0] === "db" && fn.returns && !GATED.test(fn.code))
+      const fns = exportedFunctions(src);
+      // delegating to a gated export of the same module counts (listLoansPage → listLoans);
+      // whether it is the RIGHT gate stays with the reviewer (R1)
+      const gated = new Set();
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const f of fns)
+          if (!gated.has(f.name) && (GATED.test(f.code) || [...gated].some((g) => new RegExp(`(?<![\\w$.])${escapeRe(g)}\\s*\\(`).test(f.code)))) { gated.add(f.name); grew = true; }
+      }
+      for (const fn of fns)
+        if (fn.params[0] === "db" && fn.returns && !gated.has(fn.name))
           out.push({ level: "BLOCK", id: "G4", where: `${p} ${fn.name}()`, msg: "takes db but never checks the caller (requireRole / isStaff / AccessDenied)" });
     }
     return out;
@@ -150,14 +177,14 @@ export const CHECKS = {
       if (!isSrc(p) || p.endsWith("/db.js")) continue;
       const fns = topLevelFunctions(src);
       // helpers that build email/phone objects taint every export that calls them
-      const piiHelpers = fns.filter((f) => !f.exported && /\b(email|phone)\b/.test(f.code)).map((f) => f.name);
+      const piiHelpers = fns.filter((f) => !f.exported && READS_PII.test(f.code)).map((f) => f.name);
       for (const fn of fns.filter((f) => f.exported)) {
         const { code } = fn;
-        const touchesPii = /\b(email|phone)\b/.test(code) || piiHelpers.some((h) => code.includes(`${h}(`) || new RegExp(`\\b${h}\\b`).test(code));
+        const touchesPii = READS_PII.test(code) || piiHelpers.some((h) => code.includes(`${h}(`) || new RegExp(`\\b${h}\\b`).test(code));
         if (touchesPii && !/logAccess\(/.test(code))
-          out.push({ level: "BLOCK", id: "G5", where: `${p} ${fn.name}()`, msg: "touches email/phone without logAccess(db, user, memberId, purpose)" });
-        // ponytail: any spread in a function that reads members — may hit a harmless spread; rewrite as explicit fields
-        if (/db\.members|findMember\(/.test(code) && /\.\.\.\s*[A-Za-z_]/.test(code))
+          out.push({ level: "BLOCK", id: "G5", where: `${p} ${fn.name}()`, msg: "reads email/phone without logAccess(db, user, memberId, purpose)" });
+        // ponytail: any object spread in a function that reads members — may hit a harmless one; rewrite as explicit fields
+        if (/db\.members|findMember\(/.test(code) && hasObjectSpread(code))
           out.push({ level: "BLOCK", id: "G5", where: `${p} ${fn.name}()`, msg: "spreads an object in a function that reads members — return explicit fields (PII leak risk)" });
       }
     }

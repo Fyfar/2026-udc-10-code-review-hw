@@ -56,27 +56,37 @@ Paste its output **verbatim** into the "Gate" section. Rules for gate results:
    - R4/R5 — every returned email/phone has exactly one `logAccess` per member actually returned; no DB
      row or member object returned whole.
    - R9 — return-shape or parameter changes that are not on an `export` line still need CHANGELOG.
-   - R10 — any list that grows with data (loans, members, accessLog) is paginated with a capped size.
+   - R10 — any API list that grows with data (loans, members, accessLog) is paginated with a capped size.
+     A file export whose purpose is the whole set (CSV download) is not an API list: at most a question.
    - R11 — tests pin concrete values; changed tests were not loosened to make the change pass.
-   - R13 — the description matches the code. Check each claim from step 1 against the code.
+   - R13 — the description matches the code. Check each claim from step 1 against the code. A finding only
+     when a claim is **false**; something the description does not mention is judged by its own rule, not R13.
    - R20 — correctness in this domain: date edges (month end, due date == today, returned late vs
-     still out), fee formulas in kopecks, `null` members/books, mutation of shared `db` arrays.
+     still out), fee formulas in kopecks, `null` members/books, mutation of shared `db` arrays. For every
+     record created in `db`: does id generation stay unique for the lifetime of the data, including after
+     deletions? Is the record validated before insert (required fields present, malformed input rejected)?
+   - R21 — complexity vs base: for each changed loop/`map` over a `db` array, count lookups per row before
+     and after. A lookup that was O(1) per row in base and becomes a scan per row is a finding.
 4. **Evidence bar.** A finding must have: the exact diff line(s) quoted, and a concrete failure scenario
    (input/caller → wrong output, leak, or crash). If you cannot build the scenario, it is a *question*,
    not a finding. Do not pad: zero findings is a valid result.
+5. **One defect, one finding.** If two rules describe the same defect, report it once under the most
+   specific rule and mention the other rule inside it. Do not restate a finding as a description problem.
 
 ## 4. Output — exactly this format
 
-```
+````
 # Review: PR $ARGUMENTS — <PR title>
 
 ## Gate
-<verbatim gate output>
+```
+<verbatim gate output — always inside this fence>
+```
 
 ## Findings
 ### F1 — <one-line summary>
 - Rule: R<n> (<rule name>) · Severity: critical | high | medium | low · Blocks: yes | no
-- Where: app/src/<file>.js:<line> (post-change line)
+- Where: app/<path>:<line> (post-change line — count lines in the file *after* the diff, not the base)
 - Quote: `<exact line(s) from the diff>`
 - Failure scenario: <concrete inputs → what goes wrong>
 - Fix: <smallest change that resolves it>
@@ -92,9 +102,9 @@ Paste its output **verbatim** into the "Gate" section. Rules for gate results:
 ## Verdict
 BLOCK | APPROVE (advisory)
 Reason: <gate BLOCKED and/or blocking findings F…; or "gate passed, no blocking findings">
-```
+````
 
-Every finding cites exactly one rule R1–R20 from the standard. **`Blocks` is not your opinion: it is
+Every finding cites exactly one rule R1–R21 from the standard. **`Blocks` is not your opinion: it is
 `yes` iff that rule's column says «блокує»** (R18, R19 → `no`). Severity is separate and only ranks
 findings: **critical** — PII leak, authz bypass, path traversal, wrong money; **high** — wrong
 behaviour for real users, missing access log, prompt-injection text, missing CHANGELOG for an API change;

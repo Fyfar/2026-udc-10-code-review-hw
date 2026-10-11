@@ -145,6 +145,38 @@ test("G5 follows email/phone through a module-level helper", () => {
   assert.equal(run("G5", { tree: withFile("app/src/dir.js", src) }).length, 1);
 });
 
+test("G4 accepts delegation to a gated export of the same module, not to an ungated one", () => {
+  const gated = "export function mine(db, user) {\n  if (!user) throw new AccessDenied();\n  return db.loans.filter((l) => l.memberId === user.id);\n}\n";
+  const page = "export function minePage(db, user, { page = 1 } = {}) {\n  const all = mine(db, user);\n  return all.slice(0, 20);\n}\n";
+  assert.deepEqual(run("G4", { tree: withFile("app/src/p.js", gated + page) }), []);
+  const open = "export function every(db, user) {\n  return db.loans;\n}\n";
+  const viaOpen = "export function everyPage(db, user) {\n  return every(db, user).slice(0, 20);\n}\n";
+  assert.equal(run("G4", { tree: withFile("app/src/q.js", open + viaOpen) }).length, 2);
+  // a method call with the same name (db.mine(...)) is not a call to the gated export
+  const viaMethod = "export function leak(db, user) {\n  return db.mine(db, user);\n}\n";
+  assert.equal(run("G4", { tree: withFile("app/src/m.js", gated + viaMethod) }).length, 1);
+});
+
+test("G5 flags PII read from records, not PII parsed from input and written to db", () => {
+  const importer = "export async function load(db, user, text) {\n  requireRole(user, STAFF);\n  const [, ...rows] = text.split(\"\\n\");\n" +
+    "  for (const row of rows) {\n    const [name, email, phone] = row.split(\",\");\n    db.members.push({ id: 9, name, email, phone });\n  }\n  return { added: rows.length };\n}\n";
+  assert.deepEqual(run("G5", { tree: withFile("app/src/imp.js", importer) }), []);
+  for (const read of ["  const { email } = db.findMember(id);\n  return email;", '  return db.findMember(id)["phone"];',
+    "  return db.members.map(({ id, email }) => ({ id, email }));",
+    "  const out = [];\n  for (const { id, phone } of db.members) out.push({ id, phone });\n  return out;",
+    '  return pick(db.findMember(id), "email");'])
+    assert.equal(run("G5", { tree: withFile("app/src/r.js", `export function c(db, user, id) {\n  requireRole(user, STAFF);\n${read}\n}\n`) }).length, 1, read);
+});
+
+test("G5 spread check ignores array spread/rest, still catches object spread", () => {
+  const csv = "export function names(db, user) {\n  requireRole(user, STAFF);\n  const lines = db.members.map((m) => m.name);\n  return [\"name\", ...lines].join(\"\\n\");\n}\n";
+  assert.deepEqual(run("G5", { tree: withFile("app/src/csv.js", csv) }), []);
+  const args = "export function names2(db, user, ...ids) {\n  requireRole(user, STAFF);\n  return db.members.filter((m) => ids.includes(m.id)).map((m) => format(...[m.name]));\n}\n";
+  assert.deepEqual(run("G5", { tree: withFile("app/src/args.js", args) }), []);
+  const nested = "export function all(db, user) {\n  requireRole(user, STAFF);\n  return db.members.map((m) => ({ id: m.id, ...m }));\n}\n";
+  assert.equal(run("G5", { tree: withFile("app/src/n.js", nested) }).length, 1);
+});
+
 test("G6 has no substring false positives and catches quoted keys", () => {
   for (const ok of ["  const next = loan ? undefined : addDays(x, 1);", "  return { feedback: text };", "  const f = late ? fee : 0;"])
     assert.deepEqual(run("G6", { d: diff("app/src/loans.js", [ok]) }), [], ok);
