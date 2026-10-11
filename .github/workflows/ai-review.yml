@@ -130,7 +130,7 @@ jobs:
           jq -r '.result // empty' "$RUNNER_TEMP/claude.json" > "$RUNNER_TEMP/review.md"
           # cost per PR (Task B asks for it): only these fields, never the whole session
           { echo '### AI review cost'; echo '```json'
-            jq '{duration_ms, num_turns, total_cost_usd, models: (.modelUsage | keys), usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
+            jq '{duration_ms, num_turns, total_cost_usd, models: (.modelUsage // {} | keys), usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           # Filter BEFORE the upload: an artifact of a public repo can be downloaded by any signed-in user.
           if grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}' "$RUNNER_TEMP/review.md"; then
@@ -173,7 +173,10 @@ jobs:
             echo
             echo "> \`/review-pr\` (claude-haiku-5-5) on ${HEAD_SHA::7}. **Not a check: it does not block or approve.** Merging needs the required checks \`tests (required)\` and \`gate (required)\` and a human approval."
             echo
-            head -c 60000 body.md | iconv -c -f utf-8 -t utf-8   # limit is 65536 chars; -c drops a UTF-8 char cut in half
+            # limit is 65536 chars. head -c may cut a UTF-8 char in half: iconv -c drops it, but glibc iconv
+            # still exits 1 on a truncated tail, hence `|| true` (the output is already correct)
+            head -c 60000 body.md > cut.md
+            iconv -c -f utf-8 -t utf-8 cut.md 2>/dev/null || true
           } > comment.md
           # update our own marked comment (never another workflow's), or create it
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
