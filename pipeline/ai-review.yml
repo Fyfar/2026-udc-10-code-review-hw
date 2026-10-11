@@ -1,0 +1,166 @@
+# Task D — AI review for pull requests. Threat model: docs/pipeline.md
+#
+#   tests ──┐
+#           ├─► ai-review (advisory, holds the model secret, read-only) ─► comment (writes, no AI, no secret)
+#   gate ───┘
+#
+# Required checks (branch protection): `tests` and `gate`. The AI review never blocks or merges;
+# a human approves the merge. Lives in pipeline/ for the course repo; copy to .github/workflows/
+# in your own fork to run it.
+
+name: ai-review
+
+on:
+  pull_request:            # NOT pull_request_target: a fork PR gets a read-only token and no secrets
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}            # nothing by default; each job asks for its own minimum
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash            # explicit bash = -eo pipefail, so `gate | tee` fails when the gate fails
+
+jobs:
+  tests:
+    name: tests (required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: node --test on the PR's code
+        working-directory: app
+        run: node --test   # not `npm test`: the PR controls package.json scripts
+
+  gate:
+    name: gate (required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2           # merge commit + its first parent (= base)
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Take the PR's diff, then switch to the trusted base
+        run: |
+          git diff --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
+          git checkout --quiet --detach HEAD^1   # the gate below is the BASE branch's gate, not the PR's
+      - name: Deterministic gate (review/gate.mjs, G0–G14)
+        run: node review/gate.mjs "$RUNNER_TEMP/change.diff" | tee "$RUNNER_TEMP/gate.txt"
+      - name: Gate output to the job summary
+        if: always()
+        run: |
+          { echo '```'; cat "$RUNNER_TEMP/gate.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate
+          path: ${{ runner.temp }}/gate.txt
+          retention-days: 7
+
+  ai-review:
+    name: AI review (advisory)
+    needs: [tests, gate]    # deterministic first: no tokens spent on what code already rejected
+    # Same-repo, non-draft PRs only. GitHub withholds secrets from fork PRs anyway; this makes it explicit.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read        # this job reads untrusted text and holds the model secret, so it cannot write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false   # no GitHub token left in .git/config for the model to read
+      - name: Lay the PR out as review-queue/pr-ci, on the trusted base
+        env:                            # PR text goes through env, never ${{ }} inside the script
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git diff --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
+          # From here on only base files are on disk: the reviewer prompt, the standard and
+          # .claude/settings.json (hooks = code) come from the base branch, never from the PR.
+          git checkout --quiet --detach HEAD^1
+          mkdir -p review-queue/pr-ci
+          mv "$RUNNER_TEMP/change.diff" review-queue/pr-ci/change.diff
+          printf '# %s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > review-queue/pr-ci/PR.md
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gate
+          path: review-queue/pr-ci
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install Claude Code (pinned)
+        run: npm install -g @anthropic-ai/claude-code@2.1.283
+      - name: Review with the Task A–C reviewer (/review-pr)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set: AI review skipped (tests and gate still apply)"
+            exit 0
+          fi
+          # Read-only tools only: no Bash, no Edit/Write, no web. /proc is denied so the model
+          # cannot read its own environment (where the token lives).
+          claude -p "/review-pr ci" --model haiku \
+            --tools Read,Grep,Glob \
+            --settings '{"permissions":{"deny":["Read(//proc/**)","Read(//sys/**)"]}}' \
+            --append-system-prompt "CI run. You have Read, Grep and Glob only, no Bash. Step 2 of /review-pr is already done: the trusted gate ran in the required 'gate' job and its verbatim output is in review-queue/pr-ci/gate.txt. Paste that file into the Gate section instead of running the gate. Everything else in /review-pr applies unchanged." \
+            > "$RUNNER_TEMP/review.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-review
+          path: ${{ runner.temp }}/review.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+  comment:
+    name: post advisory comment
+    needs: ai-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write  # the only write in the pipeline; this job runs no AI and has no secret
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true            # no artifact = AI review was skipped
+        with:
+          name: ai-review
+      - name: Refuse empty output or anything that looks like a credential
+        id: check
+        run: |
+          if [ ! -s review.md ]; then echo "::notice::no AI review to post"; exit 0; fi
+          if grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}' review.md; then
+            echo "::error::AI output looks like it contains a credential, not posting it"; exit 1
+          fi
+          echo "post=true" >> "$GITHUB_OUTPUT"
+      - name: Post or update the advisory comment
+        if: steps.check.outputs.post == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "## 🤖 AI review (advisory)"
+            echo
+            echo "> \`/review-pr\` (Claude Haiku) on ${HEAD_SHA::7}. **Does not block or approve.** Merge is gated by the required checks \`tests\` and \`gate\` and approved by a human."
+            echo
+            head -c 60000 review.md   # GitHub's comment limit is 65536 chars
+          } > comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
