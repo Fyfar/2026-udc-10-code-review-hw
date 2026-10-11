@@ -30,8 +30,9 @@ jobs:
           import json, sys
           calls, results = {}, {}
           for line in open(sys.argv[1]):
-              m = json.loads(line)
-              for c in (m.get("message") or {}).get("content") or []:
+              msg = json.loads(line).get("message")
+              if not isinstance(msg, dict) or not isinstance(msg.get("content"), list): continue
+              for c in msg["content"]:
                   if not isinstance(c, dict): continue
                   if c.get("type") == "tool_use": calls[c["id"]] = (c["name"], c["input"].get("file_path") or c["input"].get("path") or "")
                   if c.get("type") == "tool_result": results[c["tool_use_id"]] = (bool(c.get("is_error")), json.dumps(c.get("content"))[:160])
