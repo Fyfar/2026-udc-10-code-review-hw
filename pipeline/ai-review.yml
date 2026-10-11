@@ -4,7 +4,7 @@
 #           ├─► ai-review (advisory, holds the model secret, read-only) ─► comment (writes, no AI, no secret)
 #   gate ───┘
 #
-# Required checks (branch protection): `tests` and `gate`. The AI review never blocks or merges;
+# Required checks (branch protection): `tests (required)` and `gate (required)`. The AI review never blocks or merges;
 # a human approves the merge. Lives in pipeline/ for the course repo; copy to .github/workflows/
 # in your own fork to run it.
 
@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
+          node-version: 24   # LTS, app needs >=22. On 22 the gate's piped `node --test` prints TAP and its summary shows n/a
       - name: node --test on the PR's code
         working-directory: app
         run: node --test   # not `npm test`: the PR controls package.json scripts
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
+          node-version: 24
       - name: Take the PR's diff, then switch to the trusted base
         run: |
           git diff --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
@@ -81,6 +81,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read        # this job reads untrusted text and holds the model secret, so it cannot write
+    outputs:
+      has_review: ${{ steps.review.outputs.has_review }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,10 +106,11 @@ jobs:
           path: review-queue/pr-ci
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24   # LTS; app needs >=22. Node 22 piped output breaks the gate's test summary
-      - name: Install Claude Code (pinned)
-        run: npm install -g @anthropic-ai/claude-code@2.1.283
+          node-version: 24
+      - name: Install Claude Code (pinned to the version Tasks B/C were measured with)
+        run: npm install -g @anthropic-ai/claude-code@2.1.296
       - name: Review with the Task A–C reviewer (/review-pr)
+        id: review
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
@@ -115,58 +118,63 @@ jobs:
             echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set: AI review skipped (tests and gate still apply)"
             exit 0
           fi
-          # Read-only tools only: no Bash, no Edit/Write, no web. /proc is denied so the model
-          # cannot read its own environment (where the token lives).
-          claude -p "/review-pr ci" --model haiku \
-            --tools Read,Grep,Glob \
-            --settings '{"permissions":{"deny":["Read(//proc/**)","Read(//sys/**)"]}}' \
+          # --restricted: file tools confined to this checkout (no /proc, no runner files), no tools that
+          # run code, project settings and their hooks ignored. --tools narrows it to Read, Grep, Glob.
+          # Model pinned by id: the `haiku` alias resolves to different models in different CLI versions.
+          claude -p "/review-pr ci" --restricted --tools Read,Grep,Glob \
+            --model claude-haiku-5-5 --max-budget-usd 0.25 \
             --append-system-prompt "CI run. You have Read, Grep and Glob only, no Bash. Step 2 of /review-pr is already done: the trusted gate ran in the required 'gate' job and its verbatim output is in review-queue/pr-ci/gate.txt. Paste that file into the Gate section instead of running the gate. Everything else in /review-pr applies unchanged." \
             --output-format json > "$RUNNER_TEMP/claude.json"
-          jq -r .result "$RUNNER_TEMP/claude.json" > "$RUNNER_TEMP/review.md"
+          jq -r '.result // empty' "$RUNNER_TEMP/claude.json" > "$RUNNER_TEMP/review.md"
           # cost per PR (Task B asks for it): only these fields, never the whole session
           { echo '### AI review cost'; echo '```json'
-            jq '{duration_ms, num_turns, total_cost_usd, usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
+            jq '{duration_ms, num_turns, total_cost_usd, models: (.modelUsage | keys), usage: (.usage | {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens})}' "$RUNNER_TEMP/claude.json"
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          # Filter BEFORE the upload: an artifact of a public repo can be downloaded by any signed-in user.
+          if grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}' "$RUNNER_TEMP/review.md"; then
+            echo "::error::AI output looks like it contains a credential: not uploading or posting it"; exit 1
+          fi
+          if [ -s "$RUNNER_TEMP/review.md" ]; then echo "has_review=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.review.outputs.has_review == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review
           path: ${{ runner.temp }}/review.md
-          if-no-files-found: ignore
           retention-days: 7
 
   comment:
     name: post advisory comment
     needs: ai-review
+    if: needs.ai-review.outputs.has_review == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       pull-requests: write  # the only write in the pipeline; this job runs no AI and has no secret
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true            # no artifact = AI review was skipped
         with:
           name: ai-review
-      - name: Refuse empty output or anything that looks like a credential
-        id: check
-        run: |
-          if [ ! -s review.md ]; then echo "::notice::no AI review to post"; exit 0; fi
-          if grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}' review.md; then
-            echo "::error::AI output looks like it contains a credential, not posting it"; exit 1
-          fi
-          echo "post=true" >> "$GITHUB_OUTPUT"
       - name: Post or update the advisory comment
-        if: steps.check.outputs.post == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # drop any thinking-aloud before the report; keep the whole output if the heading is missing
+          if grep -q '^# Review:' review.md; then sed -n '/^# Review:/,$p' review.md > body.md; else cp review.md body.md; fi
           {
+            echo "<!-- ai-review -->"
             echo "## 🤖 AI review (advisory)"
             echo
-            echo "> \`/review-pr\` (Claude Haiku) on ${HEAD_SHA::7}. **Does not block or approve.** Merge is gated by the required checks \`tests\` and \`gate\` and approved by a human."
+            echo "> \`/review-pr\` (claude-haiku-5-5) on ${HEAD_SHA::7}. **Not a check: it does not block or approve.** Merging needs the required checks \`tests (required)\` and \`gate (required)\` and a human approval."
             echo
-            # drop any thinking-aloud before the report; post whole output if the heading is missing
-            if grep -q '^# Review:' review.md; then sed -n '/^# Review:/,$p' review.md; else cat review.md; fi | head -c 60000   # limit 65536
+            head -c 60000 body.md | iconv -c -f utf-8 -t utf-8   # limit is 65536 chars; -c drops a UTF-8 char cut in half
           } > comment.md
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
+          # update our own marked comment (never another workflow's), or create it
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- ai-review -->"))) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md > /dev/null
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          fi
