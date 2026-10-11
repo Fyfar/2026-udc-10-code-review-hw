@@ -1,0 +1,4 @@
+#!/bin/sh
+# Deterministic gate — blocks the commit no matter what any AI reviewer said.
+# Install once per clone: git config core.hooksPath .githooks
+exec node review/gate.mjs --staged

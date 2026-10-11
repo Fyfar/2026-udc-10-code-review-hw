@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(review/gate.mjs)",
+      "Edit(review/gate.test.mjs)",
+      "Edit(.githooks/**)",
+      "Edit(.claude/settings.json)",
+      "Edit(.claude/hooks/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
