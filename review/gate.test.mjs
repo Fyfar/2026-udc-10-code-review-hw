@@ -111,6 +111,16 @@ test("isWeakAssertion flags 'something came back' asserts", () => {
     assert.equal(isWeakAssertion(strong), false, strong);
 });
 
+test("isWeakAssertion flags one-sided bounds and 'not that value' (a range, not a value)", () => {
+  for (const weak of ['  assert.ok(lateFee(returnedLate, "2026-10-08") > 0);', "  assert.ok(rows[0].feeKopecks > 0);",
+    "  assert.ok(total >= 1);", "  assert.ok(0 < fee);", "  assert.ok(fee !== 0);", "  assert(count != 0);", "  assert.ok(n < 100);"])
+    assert.equal(isWeakAssertion(weak), true, weak);
+  // two computed values, an exact value, a predicate over every row, a compound condition: still pin something
+  for (const strong of ["  assert.ok(rows[0].dueAt <= rows[1].dueAt);", "  assert.ok(fee === 1000);",
+    "  assert.ok(rows.every((r) => r.feeKopecks > 0));", "  assert.ok(a > 0 && a === b);"])
+    assert.equal(isWeakAssertion(strong), false, strong);
+});
+
 // --- regressions found by the independent Task A verification ----------------
 
 test("G0 / gate errors still print GATE BLOCKED (the verdict keys on it)", () => {

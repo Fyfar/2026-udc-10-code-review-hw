@@ -83,7 +83,12 @@ export function isWeakAssertion(line) {
   // "is not nothing": only rules out one empty value, every other result passes
   if (fn?.startsWith("not")) return /,\s*(undefined|null|0|""|''|\[\]|\{\})\s*$/.test(args);
   // bare truthiness (assert.ok(rows)) or "non-empty" (length > 0, !== undefined)
-  return /^\s*[\w$.?[\]]+\s*$/.test(args) || /\.length\s*(>\s*0|>=\s*1|!==?\s*0)\b|!==?\s*(undefined|null)\b/.test(args);
+  if (/^\s*[\w$.?[\]]+\s*$/.test(args) || /\.length\s*(>\s*0|>=\s*1|!==?\s*0)\b|!==?\s*(undefined|null)\b/.test(args)) return true;
+  // a range, not a value: one bound against a number (fee > 0, 0 < n) or "not that one value" (x !== 0).
+  // Compound conditions and predicates (rows.every((r) => …)) are left to the reviewer.
+  // ponytail: a sign test like a.localeCompare(b) < 0 is flagged too; rewrite it as deepEqual on the sorted list.
+  if (/&&|\|\||=>/.test(args)) return false;
+  return /^[^<>!=]+(?:[<>]=?|!==?)\s*-?\d+(?:\.\d+)?\s*$|^\s*-?\d+(?:\.\d+)?\s*[<>]=?[^<>!=]+$|^[^<>!=]+!==?[^<>!=]+$/.test(args);
 }
 
 // --- checks ------------------------------------------------------------------

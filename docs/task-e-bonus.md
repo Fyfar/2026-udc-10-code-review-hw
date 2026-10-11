@@ -98,6 +98,28 @@ violations». Для оновлення workflow його вимикали на 
 | 8 | Після переходу на `--restricted` бот опублікував «не-рев'ю»: «`/review-pr` is not installed in this session» | У CI `--restricted` не завантажив slash-команду проєкту, хоча локально (macOS) той самий виклик спрацював; причину розбіжності не з'ясовано, тому команду більше не викликають як slash-команду. Коментар публікував будь-який вихід, якщо не було заголовка | Промпт тепер називає файл: `Read .claude/commands/review-pr.md and carry it out exactly, with $ARGUMENTS = ci.` Вихід без `# Review:` і `## Verdict` не публікується, а job стає червоним (fail closed) (v5) |
 | 9 | Назва «required» нічого не означала: у форку не було ні branch protection, ні ruleset, тож рядок бота v1–v3 «Merge is gated by the required checks `tests` and `gate`» був неправдою | обов'язковість check налаштовується в репо, а не в YAML | ruleset «ci-demo: required checks» на `ci-demo-base` (`tests (required)`, `gate (required)`). Після цього PR #2 має стан `BLOCKED`, а прямий push у базу відхилено (налаштування репо, між v3 і v4) |
 | 10 | (знайдено незалежним повторним рев'ю, у CI не траплялось) Рев'ю довше за 60 000 байтів, обрізане посеред кириличного символу, не публікувалось би | glibc `iconv -c` відкидає обрізаний символ, але все одно виходить з кодом 1, а з `-eo pipefail` це валить крок. Відтворено в `ubuntu:24.04` | `head -c` → файл, потім `iconv -c … \|\| true` (вихід уже правильний). Перевірено в тому ж контейнері: крок не падає, UTF-8 валідний (v6) |
+| 11 | Гейт пропустив ослаблені тести PR-5: `GATE PASSED`, хоча `assert.equal(…, 1500)` став `assert.ok(… > 0)`. Помітив сам CI-рев'юер у v5, у розділі «Questions»: «G8 passed even though two exact `assert.equal` lines were replaced with `assert.ok(x > 0)`» | G8 ловив лише `assert.ok(x)`, `length > 0` і `!== undefined/null`, а одна межа проти числа (`x > 0`, `0 < n`) і «не це значення» (`x !== 0`) проходили | Клас «межа замість значення» додано в G8 (`review/gate.mjs`) з регресійним тестом (`review/gate.test.mjs`, 28/28; складені умови й `every((r) => …)` не блокуються). Тепер PR-5 блокує G8 на обох рядках, вердикти решти п'яти PR не змінились. Прогони в таблиці вище зроблено **до** цієї зміни: у `ci-demo-base` лежить гейт Task C, тож із новим гейтом PR-5 зупинився б на `gate (required)` і до AI не дійшов би |
+
+### Перевірка `--restricted` на Linux-раннері
+
+Окремий PR у форку ([#3](https://github.com/Fyfar/2026-udc-10-code-review-hw/pull/3), база `main`, тож
+`ai-review.yml` там не запускався) з workflow-пробою: ті самі CLI `2.1.296` і прапорці `--restricted --tools
+Read,Grep,Glob --model claude-haiku-5-5`. Вердикт рахується з сирих результатів інструментів у
+`stream-json`, а не зі слів моделі; вміст файлів не друкується. Прогін [38166505333](https://github.com/Fyfar/2026-udc-10-code-review-hw/actions/runs/38166505333):
+
+| Виклик | Результат |
+|---|---|
+| Read `/etc/hosts` | DENIED |
+| Read `/proc/self/status` | DENIED |
+| Grep `/proc/self/status` | DENIED |
+| Grep `$RUNNER_TEMP` (`/home/runner/work/_temp`) | DENIED |
+| Glob `/tmp` | DENIED |
+| Read `README.md` (у checkout) | ALLOWED |
+
+Кожна відмова звучить так: «… is outside /home/runner/work/2026-udc-10-code-review-hw/2026-udc-10-code-review-hw;
+--restricted confines the file tools to the working directory». Перша спроба (усі виклики в одному промпті,
+зокрема `/proc/self/environ`) дала лише 2 виклики з 5: решту модель мовчки пропустила, тож проба вимагає
+рівно шість викликів і інакше падає. Відмова моделі не повинна виглядати як пройдена межа.
 
 ## Висновок
 
@@ -114,5 +136,3 @@ violations». Для оновлення workflow його вимикали на 
 - **Вартість на PR (фінальна конфігурація):** ~1 хв реального часу для AI-job (36–45 с роботи моделі),
   59–64 тис. токенів, оцінка CLI $0,0070–0,0086. Фактично це йде з ліміту підписки (OAuth), а не з рахунку
   API. Детерміновані checks займають ~4–9 с і нічого не коштують.
-- **Що не перевірено в демо:** PR із чужого форку (потрібен другий акаунт) і обмеження `--restricted` на
-  Linux-раннері. Друге перевірено лише локально на macOS з тією самою версією CLI.
