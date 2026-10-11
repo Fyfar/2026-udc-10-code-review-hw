@@ -67,7 +67,7 @@ AI-рев'юер може помилитися, а агент, що пише к�
 | `.githooks/pre-commit` | `node review/gate.mjs --staged` перед кожним комітом (вмикається `git config core.hooksPath .githooks`) | `--no-verify`, `core.hooksPath`, `commit-tree` | guard-хук нижче |
 | `.claude/hooks/guard.mjs` (PreToolUse) | блокує агенту `--no-verify` (і скорочення), `commit -n`, зміну `core.hooksPath`, `commit-tree`/`update-ref`, а також запис у `review/gate*`, `.githooks/`, `.claude/settings.json`, `.claude/hooks/` (redirect, `rm`/`mv`/`cp`/`sed -i`, `node -e`, патч через `git apply`); на зіпсованому вході — блок | обфускована команда навіть у Claude Code (це регулярні вирази — «лежачий поліцейський»), інший агент або людина поза Claude Code | CI (Task D) |
 | `.claude/settings.json` `permissions.deny` | Edit/Write цих же файлів заборонено на рівні дозволів (друга лінія після хука) | — | — |
-| CI (Task D, **запланований**) | той самий гейт як **обов'язковий check**, що береться з base-гілки, тож PR не може підмінити власний гейт; AI-рев'ю лише дорадчий коментар; злиття затверджує людина | — | остання стіна |
+| CI: `pipeline/ai-review.yml` (Task D) | обов'язкові checks `tests (required)` (`node --test`) і `gate (required)` (гейт з **базової** гілки, тож PR не підмінить власний гейт, команду рев'юера чи хуки); AI-рев'ю — лише дорадчий коментар; злиття затверджує людина | PR, що змінює сам workflow (див. `docs/pipeline.md`, модель загроз) | CODEOWNERS + схвалення людиною; секрет — довіра до тих, хто має право запису |
 
 **Межі гейта, чесно.** Перевірки G4, G5, G6, G9, G11 і G12 — це евристики на регулярних виразах (тіло
 функції = текст до наступного оголошення в першій колонці). Вони ловлять **клас** проблем, але не
