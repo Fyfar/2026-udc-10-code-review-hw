@@ -4,7 +4,10 @@
 #           ├─► ai-review (advisory, holds the model secret, read-only) ─► comment (writes, no AI, no secret)
 #   gate ───┘
 #
-# Required checks (branch protection): `tests (required)` and `gate (required)`. The AI review never blocks or merges;
+# Required checks (branch protection): `tests (required)` and `gate (required)`. On pull_request this YAML comes from
+# the PR's merge commit, so a PR can rename a stub job to `gate (required)`. The checks prove the gate ran only with
+# CODEOWNERS approval on workflows/pipeline/review or a "Require workflows" ruleset; this YAML alone can't close it
+# (docs/pipeline.md, threat model, "Підмінити обов'язковий check"). The AI review never blocks or merges;
 # a human approves the merge. Lives in pipeline/ for the course repo; copy to .github/workflows/
 # in your own fork to run it.
 

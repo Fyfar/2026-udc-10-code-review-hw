@@ -64,11 +64,20 @@ AI-рев'юер може помилитися, а агент, що пише к�
 
 | Рівень | Що робить | Як його можна обійти | Що це закриває |
 |---|---|---|---|
-| `review/gate.mjs` | G0–G14: тести + статичні перевірки дифу й дерева після зміни; exit 1 = блок, exit 2 = помилка гейта (теж `GATE BLOCKED`, fail closed). Без AI, без мережі, без залежностей | змінити сам гейт | guard-хук нижче; у CI — гейт з **базової** гілки |
-| `.githooks/pre-commit` | `node review/gate.mjs --staged` перед кожним комітом (вмикається `git config core.hooksPath .githooks`) | `--no-verify`, `core.hooksPath`, `commit-tree` | guard-хук нижче |
-| `.claude/hooks/guard.mjs` (PreToolUse) | блокує агенту `--no-verify` (і скорочення), `commit -n`, зміну `core.hooksPath`, `commit-tree`/`update-ref`, а також запис у `review/gate*`, `.githooks/`, `.claude/settings.json`, `.claude/hooks/` (redirect, `rm`/`mv`/`cp`/`sed -i`, `node -e`, патч через `git apply`); на зіпсованому вході — блок | будь-яка команда, якої не передбачають регулярні вирази, навіть без обфускації (`cd review && rm gate.mjs`, `git checkout <ref> -- review/`, `find … -delete`) — це «лежачий поліцейський»; інший агент або людина поза Claude Code | CI (Task D) |
-| `.claude/settings.json` `permissions.deny` | Edit/Write цих же файлів заборонено на рівні дозволів (друга лінія після хука) | — | — |
+| `review/gate.mjs` | G0–G14: тести + статичні перевірки дифу й дерева після зміни; exit 1 = блок, exit 2 = помилка гейта (теж `GATE BLOCKED`, fail closed). Без AI, без мережі, без залежностей | локально — змінити сам гейт | у CI — гейт з **базової** гілки |
+| `.githooks/pre-commit` | `node review/gate.mjs --staged` перед кожним комітом (вмикається `git config core.hooksPath .githooks`) | `--no-verify`, `core.hooksPath`, `commit-tree` | нічого локально: це зручність для автора, не межа. Межа — CI |
 | CI: `pipeline/ai-review.yml` (Task D) | обов'язкові checks `tests (required)` (`node --test`) і `gate (required)` (гейт з **базової** гілки, тож PR не підмінить власний гейт, команду рев'юера чи хуки); AI-рев'ю — лише дорадчий коментар; злиття затверджує людина | PR, що змінює сам workflow (див. `docs/pipeline.md`, модель загроз) | CODEOWNERS + схвалення людиною; секрет — довіра до тих, хто має право запису |
+
+**Чому немає локального guard-хука.** Раніше тут був PreToolUse-хук `.claude/hooks/guard.mjs` (+ `permissions.deny`
+на Edit), який регулярними виразами над текстом Bash-команди забороняв агенту `--no-verify` і запис у гейт та хуки.
+Його прибрано: з тексту команди не можна надійно визначити, які файли вона змінить. Обходи не потребують
+обфускації: `cd review && rm gate.mjs`, патч зі stdin (`cat x | git apply -`), патч без префіксів `a/`/`b/`,
+`find … -delete`, будь-який скрипт. Кожен новий регулярний вираз закриває один обхід, а не клас, тож
+захист лишався б нестабільним. `permissions.deny` на Edit Bash не зупиняє зовсім. **Локально агент із Bash
+може змінити будь-який файл у репо, і ми не заявляємо протилежного.** Межа — CI: гейт береться з базової
+гілки, а зміни в `review/`, `.claude/`, `pipeline/` рев'юїть людина (`docs/pipeline.md`). Якщо колись знадобиться
+локальна межа, це має бути ізоляція на рівні ОС (пісочниця, окремий користувач без права запису на ці
+файли), а не розбір тексту команди.
 
 **Межі гейта, чесно.** Перевірки G4, G5, G6, G8, G9, G10, G11 і G12 — це евристики на регулярних виразах (тіло
 функції = текст до наступного оголошення в першій колонці). Вони ловлять **клас** проблем, але не
@@ -85,7 +94,7 @@ AI-рев'юер може помилитися, а агент, що пише к�
 
 - Інструмент і модель: Claude Code; прогони черги — субагенти Claude Haiku (по одному на PR)
 - Рев'юер: `.claude/commands/review-pr.md`. Детерміновані обмеження: `review/gate.mjs` (+ `review/gate.test.mjs`),
-  `.githooks/pre-commit`, `.claude/hooks/guard.mjs`, `.claude/settings.json`
+  `.githooks/pre-commit`; обов'язкові checks у CI (`pipeline/ai-review.yml`)
 - Як запускаєте рев'ю одного PR: нова сесія Claude Code у корені репо → `/review-pr N`. Команда
   сама запускає `node review/gate.mjs review-queue/pr-N/change.diff` і вставляє його вихід дослівно.
   Рев'юер нічого не пише у файли: він лише виводить рев'ю, а людина (або оркестратор) зберігає його дослівно в

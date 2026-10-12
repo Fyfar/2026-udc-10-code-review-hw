@@ -10,7 +10,7 @@ import { CHECKS, isWeakAssertion, parseDiff } from "./gate.mjs";
 
 const baseTree = new Map(
   readdirSync("app", { recursive: true })
-    .map((r) => `app/${r}`)
+    .map((r) => `app/${r.split("\\").join("/")}`) // Windows returns `\`; same as readTree in gate.mjs
     .filter((p) => /\.(js|json|md)$/.test(p))
     .map((p) => [p, readFileSync(p, "utf8")]),
 );
