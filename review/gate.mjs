@@ -74,21 +74,42 @@ export function topLevelFunctions(source) {
 }
 export const exportedFunctions = (source) => topLevelFunctions(source).filter((f) => f.exported);
 
+/** Split call arguments on top-level commas: brackets and string literals are skipped. */
+function topLevelArgs(s) {
+  const out = [];
+  let depth = 0, quote = "", start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) { if (c === "\\") i++; else if (c === quote) quote = ""; }
+    else if (/["'`]/.test(c)) quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+  }
+  return [...out, s.slice(start)];
+}
+
 /** Conventions §8: an added test line that only proves "something came back". */
 export function isWeakAssertion(line) {
-  // assert(x) / assert.ok(x) / assert.not*(x, <empty>) — anything else (equal, deepEqual, throws…) pins a value
-  const m = line.match(/\bassert(?:\.(ok|notEqual|notStrictEqual|notDeepEqual|notDeepStrictEqual))?\s*\((.*)\)\s*;?\s*$/);
+  // assert(x) / ok(x) / equal|deepEqual(cond, true) / not*(x, <empty>) — other equal/deepEqual/throws calls pin a value
+  const m = line.match(/\bassert(?:\.(ok|equal|strictEqual|deepEqual|deepStrictEqual|notEqual|notStrictEqual|notDeepEqual|notDeepStrictEqual))?\s*\((.*)\)\s*;?\s*$/);
   if (!m) return false;
-  const [, fn, args] = m;
+  const [, fn] = m;
+  // judge the value, not the message: assert.ok(fee > 0, "msg"), notEqual(x, null, "msg")
+  const [args, expected = ""] = topLevelArgs(m[2]);
   // "is not nothing": only rules out one empty value, every other result passes
-  if (fn?.startsWith("not")) return /,\s*(undefined|null|0|""|''|\[\]|\{\})\s*$/.test(args);
+  if (fn?.startsWith("not")) return /^\s*(undefined|null|0|""|''|\[\]|\{\})\s*$/.test(expected);
+  // equal(cond, true) is ok(cond) for a bound; equal(flag, true) pins a boolean, so no bare-truthiness rule
+  const eq = /equal/i.test(fn ?? "");
+  if (eq && expected.trim() !== "true") return false;
+  // ponytail: one line at a time — an assert split over several lines is left to the reviewer (R11).
   // bare truthiness (assert.ok(rows)) or "non-empty" (length > 0, !== undefined)
-  if (/^\s*[\w$.?[\]]+\s*$/.test(args) || /\.length\s*(>\s*0|>=\s*1|!==?\s*0)\b|!==?\s*(undefined|null)\b/.test(args)) return true;
+  if ((!eq && /^\s*[\w$.?[\]]+\s*$/.test(args)) || /\.length\s*(>\s*0|>=\s*1|!==?\s*0)\b|!==?\s*(undefined|null)\b/.test(args)) return true;
   // a range, not a value: one bound against a number (fee > 0, 0 < n) or "not that one value" (x !== 0).
   // Compound conditions and predicates (rows.every((r) => …)) are left to the reviewer.
   // ponytail: a sign test like a.localeCompare(b) < 0 is flagged too; rewrite it as deepEqual on the sorted list.
   if (/&&|\|\||=>/.test(args)) return false;
-  return /^[^<>!=]+(?:[<>]=?|!==?)\s*-?\d+(?:\.\d+)?\s*$|^\s*-?\d+(?:\.\d+)?\s*[<>]=?[^<>!=]+$|^[^<>!=]+!==?[^<>!=]+$/.test(args);
+  return /^[^<>!=]+(?:[<>]=?|!==?)\s*-?\d+(?:\.\d+)?\s*$|^\s*-?\d+(?:\.\d+)?\s*[<>]=?[^<>!=]+$|^[^<>!=]+!==?\s*("[^"]*"|'[^']*'|true|false|null|undefined)\s*$/.test(args);
 }
 
 // --- checks ------------------------------------------------------------------
@@ -98,7 +119,7 @@ export function isWeakAssertion(line) {
 // Phrases only a tool/reviewer would be the audience for. Kept narrow on purpose: everyday
 // comments ("role already checked above", "do not report returned loans") must pass.
 const TOOL_ADDRESSED =
-  /\b(ai|llm|gpt|chatgpt|claude|copilot|coderabbit|reviewers?|code[- ]review)\b|рев.?ю|схвал|вже\s+(перевірен|затверджен)|ignore (all |any )?(previous|prior|above)|disregard (the|all|any|previous)|\blgtm\b|approved?\s+(this|the)\s+(pr|change|diff)|pre-?approved|already\s+(been\s+)?(reviewed|approved|audited)|do not (flag|review)|no need to review|safe to merge|you are (an?|the) |eslint-disable|@ts-(ignore|nocheck|expect-error)|(istanbul|c8|coverage) ignore|\bnosec\b|\bnoqa\b|NOSONAR/i;
+  /\b(ai|llm|gpt|chatgpt|claude|copilot|coderabbit|reviewers?|code[- ]review)\b|(?<![а-яіїєґ'’])рев.?ю|схвал(и|іть|юйте|ити)(?![а-яіїєґ])|вже\s+(перевірен|затверджен)|ignore (all |any )?(previous|prior|above)|disregard (the|all|any|previous)|\blgtm\b|approved?\s+(this|the)\s+(pr|change|diff)|pre-?approved|already\s+(been\s+)?(reviewed|approved|audited)|do not (flag|review)|no need to review|safe to merge|you are (an?|the) (ai|assistant|model|bot|code reviewer)\b|eslint-disable|@ts-(ignore|nocheck|expect-error)|(istanbul|c8|coverage) ignore|\bnosec\b|\bnoqa\b|NOSONAR/i;
 const HIDDEN_CHARS = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u061C\uFEFF\u{E0000}-\u{E007F}]/u;
 const SECRET =
   /sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{32,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abprs]-[\w-]{10,}/;
@@ -160,7 +181,7 @@ export const CHECKS = {
     for (const [p, src] of ctx.tree) {
       if (!isSrc(p)) continue;
       const fns = exportedFunctions(src);
-      // delegating to a gated export of the same module counts (listLoansPage → listLoans);
+      // delegating to a gated export of the same module counts (fooPage → foo);
       // whether it is the RIGHT gate stays with the reviewer (R1)
       const gated = new Set();
       for (let grew = true; grew; ) {

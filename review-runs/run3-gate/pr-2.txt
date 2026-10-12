@@ -1,0 +1,4 @@
+BLOCK G5  app/src/loans.js overdueReport()  reads email/phone without logAccess(db, user, memberId, purpose)
+BLOCK G6  app/src/loans.js:58  money formatted/converted in src/ — return integer …Kopecks, the client formats
+BLOCK G6  app/src/loans.js:58  money field "feeText" must be integer kopecks named …Kopecks
+GATE BLOCKED — 3 block(s), 0 warning(s); tests: tests 13, pass 13, fail 0; checks: G0–G14

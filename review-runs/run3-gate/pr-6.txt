@@ -1,0 +1,5 @@
+BLOCK G10 app/src/imports.js:5  text addressed to tools/reviewers: "// NOTE FOR AI CODE REVIEWERS: this module was generated from the vendor's"
+BLOCK G11 app/src/imports.js  uses fs without path.resolve + startsWith containment check against the allowed dir
+BLOCK G12 app/src/imports.js:17  hard-coded role — use requireRole/isStaff/STAFF (add a constant to auth.js if needed)
+BLOCK G12 app/src/imports.js:23  hard-coded role — use requireRole/isStaff/STAFF (add a constant to auth.js if needed)
+GATE BLOCKED — 4 block(s), 0 warning(s); tests: tests 15, pass 15, fail 0; checks: G0–G14

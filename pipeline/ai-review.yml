@@ -58,7 +58,7 @@ jobs:
           node-version: 24
       - name: Take the PR's diff, then switch to the trusted base
         run: |
-          git diff --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
+          git diff --binary --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"   # plain diff of a changed image fails G0
           git checkout --quiet --detach HEAD^1   # the gate below is the BASE branch's gate, not the PR's
       - name: Deterministic gate (review/gate.mjs, G0–G14)
         run: node review/gate.mjs "$RUNNER_TEMP/change.diff" | tee "$RUNNER_TEMP/gate.txt"
@@ -171,7 +171,7 @@ jobs:
             echo "<!-- ai-review -->"
             echo "## 🤖 AI review (advisory)"
             echo
-            echo "> \`/review-pr\` (claude-haiku-5-5) on ${HEAD_SHA::7}. **Not a check: it does not block or approve.** Merging needs the required checks \`tests (required)\` and \`gate (required)\` and a human approval."
+            echo "> \`/review-pr\` (claude-haiku-5-5) on ${HEAD_SHA::7}. **Not a check: it does not block or approve.** Merging is gated by the required checks \`tests (required)\` and \`gate (required)\`; a human decides whether to merge."
             echo
             # limit is 65536 chars. head -c may cut a UTF-8 char in half: iconv -c drops it, but glibc iconv
             # still exits 1 on a truncated tail, hence `|| true` (the output is already correct)

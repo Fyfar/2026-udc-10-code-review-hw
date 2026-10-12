@@ -1,0 +1,2 @@
+BLOCK G3  app/src/loans.js  exported API changed but app/CHANGELOG.md has no entry in this diff
+GATE BLOCKED — 1 block(s), 0 warning(s); tests: tests 14, pass 14, fail 0; checks: G0–G14

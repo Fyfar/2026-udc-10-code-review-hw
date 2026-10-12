@@ -1,0 +1,3 @@
+BLOCK G8  app/test/loans.test.js:40  assertion proves nothing concrete — pin the expected value
+BLOCK G8  app/test/loans.test.js:49  assertion proves nothing concrete — pin the expected value
+GATE BLOCKED — 2 block(s), 0 warning(s); tests: tests 13, pass 13, fail 0; checks: G0–G14

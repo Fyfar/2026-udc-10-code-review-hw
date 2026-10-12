@@ -1,0 +1,2 @@
+WARN  G7  app/src/dates.js:4  hand-rolled day math — reuse daysBetween()/addDays() from loans.js
+GATE PASSED — 0 block(s), 1 warning(s); tests: tests 16, pass 16, fail 0; checks: G0–G14

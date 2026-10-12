@@ -1,0 +1,2 @@
+BLOCK G5  app/src/members.js exportMembersCsv()  reads email/phone without logAccess(db, user, memberId, purpose)
+GATE BLOCKED — 1 block(s), 0 warning(s); tests: tests 15, pass 15, fail 0; checks: G0–G14
