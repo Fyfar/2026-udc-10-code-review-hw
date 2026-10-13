@@ -1,0 +1,87 @@
+diff --git a/app/CHANGELOG.md b/app/CHANGELOG.md
+index f6cef87..753dcca 100644
+--- a/app/CHANGELOG.md
++++ b/app/CHANGELOG.md
+@@ -3,6 +3,11 @@
+ Every change to what a public function in `src/` accepts or returns gets an entry
+ here in the same pull request (see `docs/team-conventions.md`).
+ 
++## 2026-10
++
++- `returnLoan(db, user, loanId, onIso)` — closes a loan (staff: any, member: own) and
++  returns `{ loanId, returnedAt, feeKopecks }`.
++
+ ## 2026-09
+ 
+ - `overdueReport(db, user, todayIso)` — staff-only report of loans past due, with
+diff --git a/app/src/loans.js b/app/src/loans.js
+index e0ad95c..5a86526 100644
+--- a/app/src/loans.js
++++ b/app/src/loans.js
+@@ -1,4 +1,4 @@
+-import { isStaff, requireRole, STAFF } from "./auth.js";
++import { AccessDenied, isStaff, requireRole, STAFF } from "./auth.js";
+ 
+ export const LOAN_DAYS = 14;
+ export const FEE_PER_DAY_KOPECKS = 500; // 5 грн за кожен день прострочення
+@@ -34,6 +34,21 @@ export function borrow(db, user, { bookId, takenAt }) {
+   return db.addLoan({ memberId: user.id, bookId, takenAt, dueAt: addDays(takenAt, LOAN_DAYS) });
+ }
+ 
++/**
++ * Close a loan: staff may return any loan, a member only their own.
++ * Returns the closing fee so the desk can collect it.
++ */
++export function returnLoan(db, user, loanId, onIso) {
++  if (!user) throw new AccessDenied();
++  const loan = db.loans.find((l) => l.id === loanId);
++  if (!loan) throw new Error("no such loan");
++  if (!isStaff(user) && loan.memberId !== user.id) throw new AccessDenied();
++  if (loan.returnedAt !== null) throw new Error("loan is already returned");
++  if (!/^\d{4}-\d{2}-\d{2}$/.test(onIso) || onIso < loan.takenAt) throw new Error("bad return date");
++  loan.returnedAt = onIso;
++  return { loanId: loan.id, returnedAt: onIso, feeKopecks: lateFee(loan, onIso) };
++}
++
+ /** Late fee in kopecks for a loan returned (or still out) on `onIso`. */
+ export function lateFee(loan, onIso) {
+   const late = daysBetween(loan.dueAt, loan.returnedAt ?? onIso);
+diff --git a/app/test/loans.test.js b/app/test/loans.test.js
+index b41d3e6..efef2d3 100644
+--- a/app/test/loans.test.js
++++ b/app/test/loans.test.js
+@@ -1,7 +1,7 @@
+ import test from "node:test";
+ import assert from "node:assert/strict";
+ import { createDb } from "../src/db.js";
+-import { listLoans, borrow, lateFee, overdueReport, addDays, daysBetween, LOAN_DAYS } from "../src/loans.js";
++import { listLoans, borrow, returnLoan, lateFee, overdueReport, addDays, daysBetween, LOAN_DAYS } from "../src/loans.js";
+ import { AccessDenied } from "../src/auth.js";
+ 
+ const olya = { id: 1, role: "member" };
+@@ -52,3 +52,25 @@ test("overdue report lists loans still out past due, most overdue first", () =>
+ test("the overdue report is staff-only", () => {
+   assert.throws(() => overdueReport(createDb(), olya, "2026-10-08"), AccessDenied);
+ });
++
++test("returning a loan closes it and charges the late days", () => {
++  const db = createDb();
++  const res = returnLoan(db, iryna, 3, "2026-09-22"); // due 09-19
++  assert.deepEqual(res, { loanId: 3, returnedAt: "2026-09-22", feeKopecks: 1500 });
++  assert.equal(db.loans.find((l) => l.id === 3).returnedAt, "2026-09-22");
++});
++
++test("a member returns their own loan on time for free", () => {
++  assert.equal(returnLoan(createDb(), olya, 2, "2026-09-20").feeKopecks, 0);
++});
++
++test("a member cannot return someone else's loan", () => {
++  const db = createDb();
++  assert.throws(() => returnLoan(db, olya, 3, "2026-09-22"), AccessDenied);
++  assert.equal(db.loans.find((l) => l.id === 3).returnedAt, null);
++});
++
++test("a loan cannot be returned twice or before it was taken", () => {
++  assert.throws(() => returnLoan(createDb(), iryna, 1, "2026-09-20"), /already returned/);
++  assert.throws(() => returnLoan(createDb(), iryna, 2, "2026-09-01"), /bad return date/);
++});

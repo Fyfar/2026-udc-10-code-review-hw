@@ -108,8 +108,9 @@ Reason: <gate BLOCKED and/or blocking findings F…; or "gate passed, no blockin
 Every finding cites exactly one rule R1–R21 from the standard. **`Blocks` is not your opinion: it is
 `yes` iff that rule's column says «блокує»** (R18, R19 → `no`). Severity is separate and only ranks
 findings: **critical** — PII leak, authz bypass, path traversal, wrong money; **high** — wrong
-behaviour for real users, missing access log, prompt-injection text, missing CHANGELOG for an API change;
-**medium** — missing pagination, weak/missing tests, description mismatch without user impact;
+behaviour for real users, missing access log, prompt-injection text, missing CHANGELOG for an API change,
+an existing test loosened or deleted (it stops guarding every later change, not just this one);
+**medium** — missing pagination, weak or missing tests for *new* code, description mismatch without user impact;
 **low** — style, naming, duplication.
 
 Verdict is mechanical: **BLOCK** if the gate output has any `BLOCK` line, `GATE BLOCKED`, or no final

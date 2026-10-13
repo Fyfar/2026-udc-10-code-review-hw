@@ -1,0 +1,58 @@
+diff --git a/app/CHANGELOG.md b/app/CHANGELOG.md
+index f6cef87..a0f45a3 100644
+--- a/app/CHANGELOG.md
++++ b/app/CHANGELOG.md
+@@ -3,6 +3,10 @@
+ Every change to what a public function in `src/` accepts or returns gets an entry
+ here in the same pull request (see `docs/team-conventions.md`).
+ 
++## 2026-10
++
++- `listMembers` rows gain `activeLoans` — how many books the member has not returned yet.
++
+ ## 2026-09
+ 
+ - `overdueReport(db, user, todayIso)` — staff-only report of loans past due, with
+diff --git a/app/src/members.js b/app/src/members.js
+index 2881d91..c852acd 100644
+--- a/app/src/members.js
++++ b/app/src/members.js
+@@ -1,10 +1,15 @@
+ import { AccessDenied, isStaff, requireRole, STAFF } from "./auth.js";
+ import { logAccess } from "./audit.js";
+ 
+-/** Staff-only directory: names and roles, no contact details. */
++/** Staff-only directory: names, roles and how many books each member has out. */
+ export function listMembers(db, user) {
+   requireRole(user, STAFF);
+-  return db.members.map(({ id, name, role }) => ({ id, name, role }));
++  return db.members.map(({ id, name, role }) => ({
++    id,
++    name,
++    role,
++    activeLoans: db.loans.filter((l) => l.memberId === id && l.returnedAt === null).length,
++  }));
+ }
+ 
+ /** A member may read their own card; staff may read anyone's. */
+diff --git a/app/test/members.test.js b/app/test/members.test.js
+index 8aef869..72210d7 100644
+--- a/app/test/members.test.js
++++ b/app/test/members.test.js
+@@ -10,10 +10,15 @@ const iryna = { id: 3, role: "librarian" };
+ test("the member directory is staff-only and has no contact details", () => {
+   const rows = listMembers(createDb(), iryna);
+   assert.equal(rows.length, 5);
+-  assert.deepEqual(Object.keys(rows[0]).sort(), ["id", "name", "role"]);
++  assert.deepEqual(Object.keys(rows[0]).sort(), ["activeLoans", "id", "name", "role"]);
+   assert.throws(() => listMembers(createDb(), olya), AccessDenied);
+ });
+ 
++test("the directory counts the books each member still has out", () => {
++  const rows = listMembers(createDb(), iryna);
++  assert.deepEqual(rows.map((r) => [r.id, r.activeLoans]), [[1, 1], [2, 1], [3, 0], [4, 0], [5, 2]]);
++});
++
+ test("a member reads their own card", () => {
+   const card = memberCard(createDb(), olya, 1);
+   assert.equal(card.email, "olya@example.invalid");

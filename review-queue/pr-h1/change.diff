@@ -1,0 +1,56 @@
+diff --git a/app/CHANGELOG.md b/app/CHANGELOG.md
+index f6cef87..d07cf45 100644
+--- a/app/CHANGELOG.md
++++ b/app/CHANGELOG.md
+@@ -3,6 +3,11 @@
+ Every change to what a public function in `src/` accepts or returns gets an entry
+ here in the same pull request (see `docs/team-conventions.md`).
+ 
++## 2026-10
++
++- `addBook(db, user, { title, author })` — staff-only: adds a book to the catalog and
++  returns `{ id, title, author }`.
++
+ ## 2026-09
+ 
+ - `overdueReport(db, user, todayIso)` — staff-only report of loans past due, with
+diff --git a/app/src/books.js b/app/src/books.js
+new file mode 100644
+index 0000000..13e2b55
+--- /dev/null
++++ b/app/src/books.js
+@@ -0,0 +1,9 @@
++import { requireRole, STAFF } from "./auth.js";
++
++/** Staff add a book to the catalog. Returns the new catalog entry. */
++export function addBook(db, user, { title, author }) {
++  requireRole(user, STAFF);
++  const book = { id: db.books.at(-1).id + 1, title: title.trim(), author: author.trim() };
++  db.books.push(book);
++  return { id: book.id, title: book.title, author: book.author };
++}
+diff --git a/app/test/books.test.js b/app/test/books.test.js
+new file mode 100644
+index 0000000..647c6ca
+--- /dev/null
++++ b/app/test/books.test.js
+@@ -0,0 +1,19 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { createDb } from "../src/db.js";
++import { addBook } from "../src/books.js";
++import { AccessDenied } from "../src/auth.js";
++
++const olya = { id: 1, role: "member" };
++const iryna = { id: 3, role: "librarian" };
++
++test("staff add a book and it gets the next id", () => {
++  const db = createDb();
++  const book = addBook(db, iryna, { title: " Камінний хрест ", author: "Василь Стефаник" });
++  assert.deepEqual(book, { id: 107, title: "Камінний хрест", author: "Василь Стефаник" });
++  assert.equal(db.findBook(107).title, "Камінний хрест");
++});
++
++test("a member cannot add books", () => {
++  assert.throws(() => addBook(createDb(), olya, { title: "X", author: "Y" }), AccessDenied);
++});
